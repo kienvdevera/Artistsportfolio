@@ -37,7 +37,8 @@
   }[character]));
 
   async function imageUrl(path) {
-    const endpoint = `${config.url.replace(/\/$/, "")}/storage/v1/object/sign/artwork-images/${path.split("/").map(encodeURIComponent).join("/")}`;
+    const baseUrl = config.url.replace(/\/$/, "");
+    const endpoint = `${baseUrl}/storage/v1/object/sign/artwork-images/${path.split("/").map(encodeURIComponent).join("/")}`;
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -49,7 +50,14 @@
     });
     if (!response.ok) throw new Error(`Could not retrieve an approved artwork image (${response.status}).`);
     const result = await response.json();
-    return `${config.url.replace(/\/$/, "")}${result.signedURL}`;
+    if (typeof result.signedURL !== "string" || !result.signedURL) {
+      throw new Error("Supabase did not return a signed artwork image URL.");
+    }
+    if (/^https?:\/\//i.test(result.signedURL)) return result.signedURL;
+    const storagePath = result.signedURL.startsWith("/storage/v1/")
+      ? result.signedURL
+      : `/storage/v1${result.signedURL.startsWith("/") ? "" : "/"}${result.signedURL}`;
+    return `${baseUrl}${storagePath}`;
   }
 
   async function showDetail(artwork) {
@@ -63,6 +71,7 @@
     document.getElementById("detailContent").innerHTML = `
       <img src="${escapeHtml(image)}" alt="${escapeHtml(artwork.title)}">
       <h3>${escapeHtml(artwork.title)}</h3>
+      ${artwork.status === "pending" ? "<p><strong>Awaiting admin review.</strong></p>" : ""}
       <p>${escapeHtml(artwork.medium)} · ${escapeHtml(artwork.year)}${artwork.dimensions ? ` · ${escapeHtml(artwork.dimensions)}` : ""}</p>
       <p>${escapeHtml(artwork.description || "No description has been added yet.")}</p>
       <a class="button primary" href="mailto:kienvalantindevera@gmail.com?subject=${encodeURIComponent(`Artwork inquiry: ${artwork.title}`)}">INQUIRE ABOUT THIS WORK ↗</a>`;
@@ -79,10 +88,10 @@
     count.textContent = String(artworks.length).padStart(2, "0");
     gallery.innerHTML = rows.length
       ? rows.map((artwork) => `<article class="art-card" tabindex="0" data-artwork-id="${escapeHtml(artwork.id)}">
-          <div class="art-image"><div class="placeholder">${escapeHtml(artwork.medium.toUpperCase())}</div><span class="tag">${escapeHtml(artwork.medium)}</span></div>
+          <div class="art-image"><div class="placeholder">${escapeHtml(artwork.medium.toUpperCase())}</div><span class="tag">${escapeHtml(artwork.medium)}${artwork.status === "pending" ? " · AWAITING REVIEW" : ""}</span></div>
           <div class="art-meta"><div><h3>${escapeHtml(artwork.title)}</h3><p>${escapeHtml(artwork.dimensions || "Traditional artwork")}</p></div><span class="art-year">${escapeHtml(artwork.year)}</span></div>
         </article>`).join("")
-      : '<div class="empty">No published artworks match this search.</div>';
+      : '<div class="empty">No artworks match this search.</div>';
     let imageFailure = false;
     Promise.all(rows.map(async (artwork) => {
       try {
@@ -129,8 +138,8 @@
   filters.forEach((button) => button.addEventListener("click", render));
 
   const query = new URLSearchParams({
-    select: "id,title,medium,year,dimensions,description,image_path",
-    status: "eq.published",
+    select: "id,title,medium,year,dimensions,description,image_path,status",
+    status: "in.(pending,published)",
     order: "created_at.desc",
   });
   fetch(`${config.url.replace(/\/$/, "")}/rest/v1/artworks?${query}`, {
@@ -140,7 +149,7 @@
     artworks = await response.json();
     render();
   }).catch((error) => {
-    console.error("Could not load published Supabase artworks:", error);
-    if (typeof window.toast === "function") window.toast(`Published artworks could not be loaded: ${error.message}`);
+    console.error("Could not load Supabase artworks:", error);
+    if (typeof window.toast === "function") window.toast(`Artworks could not be loaded: ${error.message}`);
   });
 })();
